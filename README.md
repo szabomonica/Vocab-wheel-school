@@ -1,2 +1,208 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>School Vocabulary Quiz — A–Z Game</title>
+<style>
+  body{font-family:Arial,Helvetica,sans-serif;background:#f6f8fa;margin:0;color:#222}
+  .container{max-width:1100px;margin:40px auto;display:grid;grid-template-columns:1fr 360px;gap:20px;padding:0 20px}
+  @media(max-width:900px){.container{grid-template-columns:1fr}}
+  .card,.panel{background:#fff;border-radius:14px;box-shadow:0 4px 16px rgba(0,0,0,.08);padding:16px}
+  .ring-area{position:relative;aspect-ratio:1/1;border:1px dashed #ddd;border-radius:12px;background:#fafafa}
+  .letter{position:absolute;width:58px;height:58px;display:grid;place-items:center;border-radius:999px;
+    background:#f1f5f9;color:#334155;font-weight:800;font-size:20px;cursor:pointer;
+    border:1px solid #d1d5db;transition:all .2s ease}
+  .letter:hover{transform:translateY(-2px);box-shadow:0 4px 10px rgba(0,0,0,.1)}
+  .letter.active{background:#cffafe;border-color:#06b6d4;color:#0e7490}
+  .letter.done{background:#dcfce7;border-color:#22c55e;color:#166534}
+  .letter.passed{opacity:.6}
+  .panel{display:flex;flex-direction:column;gap:12px}
+  .stats{display:flex;flex-wrap:wrap;gap:12px;font-weight:700;color:#555}
+  .stats b{color:#000}
+  .timer{font-size:26px;font-weight:800;border:1px solid #ddd;border-radius:12px;padding:4px 12px}
+  .clue{min-height:70px;padding:12px;border:1px solid #ddd;border-radius:10px;background:#fff}
+  .big-letter{display:inline-grid;place-items:center;width:36px;height:36px;margin-right:8px;
+              background:#06b6d4;color:#fff;border-radius:50%;font-weight:800}
+  input[type=text]{flex:1;padding:10px 14px;border-radius:10px;border:1px solid #ccc;font-size:16px}
+  .controls{display:flex;gap:10px}
+  button{padding:10px 14px;font-weight:700;border-radius:10px;border:1px solid #ccc;cursor:pointer;background:#fff}
+  button.primary{background:#06b6d4;color:#fff;border-color:#06b6d4}
+  button.secondary{background:#f1f5f9}
+  .feedback{font-weight:800;min-height:22px}
+  .ok{color:#22c55e} .bad{color:#dc2626} .muted{color:#6b7280}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <h2>School Vocabulary A–Z</h2>
+    <div class="ring-area" id="ring"></div>
+  </div>
+  <div class="panel">
+    <div class="stats">
+      <span>Pontszám: <b id="score">0</b></span>
+      <span>Megoldva: <b id="solved">0</b>/25</span>
+      <span>Passz: <b id="passed">0</b></span>
+      <span>Hátra: <b id="left">25</b></span>
+      <span class="timer" id="timer">05:00</span>
+    </div>
+    <div class="clue" id="clue"><span class="muted">Kattints egy betűre a kezdéshez.</span></div>
+    <div class="controls">
+      <input id="answer" type="text" placeholder="Válasz…" disabled />
+      <button id="submit" class="primary" disabled>Beküld</button>
+      <button id="pass" class="secondary" disabled>Passz</button>
+    </div>
+    <div class="feedback" id="feedback"></div>
+    <button id="reset">Reset</button>
+  </div>
+</div>
+
+<audio id="ding" src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg" preload="auto"></audio>
+
+<script>
+const CLUES = {
+  A:{clue:"An activity where you create paintings or drawings.",answer:"art"},
+  B:{clue:"The science of living things.",answer:"biology"},
+  C:{clue:"The study of substances and how they react.",answer:"chemistry"},
+  D:{clue:"A piece of furniture where you study or write.",answer:"desk"},
+  E:{clue:"The language spoken in the UK and the USA.",answer:"english"},
+  F:{clue:"The language spoken in France.",answer:"french"},
+  G:{clue:"The study of the Earth and its countries.",answer:"geography"},
+  H:{clue:"The study of past events.",answer:"history"},
+  I:{clue:"Short for Information and Communication Technology.",answer:"ict"},
+  J:{clue:"A person who cleans and maintains a building.",answer:"janitor"},
+  K:{clue:"What you gain when you learn something new.",answer:"knowledge"},
+  L:{clue:"A place where you can borrow books.",answer:"library"},
+  M:{clue:"Being fully grown or behaving responsibly.",answer:"mature"},
+  N:{clue:"A book for writing notes in class.",answer:"notebook"},
+  O:{clue:"A room where people work at desks.",answer:"office"},
+  P:{clue:"An outdoor area where children play.",answer:"playground"},
+  R:{clue:"A small eraser used to remove pencil marks.",answer:"rubber"},
+  Q:{clue:"A short exam to check your knowledge.",answer:"quick test"},
+  S:{clue:"A subject that studies nature and experiments.",answer:"science"},
+  T:{clue:"A fixed period of time in a school year.",answer:"term"},
+  U:{clue:"Special clothes students wear at school.",answer:"uniform"},
+  V:{clue:"A musical instrument you play with a bow.",answer:"violin"},
+  W:{clue:"A large board in classrooms you can write on with a marker.",answer:"whiteboard"},
+  Y:{clue:"Not old; still in early life.",answer:"young"},
+  Z:{clue:"A place where animals are kept for people to visit.",answer:"zoo"}
+};
+const LETTERS = Object.keys(CLUES);
+const state = {active:null,solved:new Set(),passed:new Set(),score:0,remainingMs:5*60*1000,timer:null,started:false};
+function $(id){return document.getElementById(id);}
+const ring=$('ring'), clue=$('clue'), answer=$('answer'), feedback=$('feedback'),
+submitBtn=$('submit'), passBtn=$('pass'), resetBtn=$('reset'),
+scoreEl=$('score'), solvedEl=$('solved'), passedEl=$('passed'),
+leftEl=$('left'), timerEl=$('timer');
+
+function buildRing(){
+  ring.innerHTML="";
+  const N=LETTERS.length;
+  const size=ring.clientWidth||ring.getBoundingClientRect().width;
+  const r=(size/2)-60;
+  LETTERS.forEach((L,i)=>{
+    const angle=(i/N)*2*Math.PI-Math.PI/2;
+    const x=Math.cos(angle)*r+size/2, y=Math.sin(angle)*r+size/2;
+    const el=document.createElement("div");
+    el.className="letter";
+    el.textContent=L;
+    el.style.left=(x-29)+"px"; el.style.top=(y-29)+"px";
+    el.onclick=()=>onLetterClick(L);
+    ring.appendChild(el);
+  });
+  refreshLetters();
+}
+window.addEventListener("resize",buildRing);
+
+function renderTime(ms){
+  const s=Math.max(0,Math.floor(ms/1000));
+  const m=String(Math.floor(s/60)).padStart(2,"0"), sec=String(s%60).padStart(2,"0");
+  timerEl.textContent=`${m}:${sec}`;
+}
+function startTimerOnce(){
+  if(state.started)return;
+  state.started=true;
+  const start=performance.now(), startLeft=state.remainingMs;
+  function tick(now){
+    const elapsed=now-start;
+    state.remainingMs=Math.max(0,startLeft-elapsed);
+    renderTime(state.remainingMs);
+    if(state.remainingMs<=0)return endGame();
+    state.timer=requestAnimationFrame(tick);
+  }
+  state.timer=requestAnimationFrame(tick);
+}
+function onLetterClick(L){
+  if(state.solved.has(L))return;
+  if(state.active && state.active!==L)return;
+  state.active=L;
+  const data=CLUES[L];
+  clue.innerHTML=`<span class='big-letter'>${L}</span>${data.clue}`;
+  feedback.textContent="";
+  answer.value=""; answer.disabled=false; submitBtn.disabled=false; passBtn.disabled=false; answer.focus();
+  startTimerOnce();
+  refreshLetters();
+}
+function submit(){
+  const L=state.active; if(!L)return;
+  const guess=answer.value.trim().toLowerCase();
+  if(!guess)return;
+  if(guess===CLUES[L].answer){
+    state.solved.add(L); state.score+=10;
+    feedback.textContent="Helyes! +10 pont"; feedback.className="feedback ok";
+    $("ding").play();
+    endLetter();
+  }else{
+    feedback.textContent="Nem ez, próbáld újra vagy Passz."; feedback.className="feedback bad";
+  }
+}
+function pass(){
+  const L=state.active; if(!L)return;
+  state.passed.add(L);
+  feedback.textContent="Passz — később visszatérhetsz."; feedback.className="feedback muted";
+  endLetter();
+}
+function endLetter(){
+  state.active=null;
+  answer.disabled=true; submitBtn.disabled=true; passBtn.disabled=true;
+  refreshLetters(); updateStats();
+  if(state.solved.size===LETTERS.length) endGame();
+  else clue.innerHTML="<span class='muted'>Válassz új betűt!</span>";
+}
+function refreshLetters(){
+  document.querySelectorAll(".letter").forEach(el=>{
+    const L=el.textContent;
+    el.classList.remove("active","done","passed");
+    if(state.active===L)el.classList.add("active");
+    else if(state.solved.has(L))el.classList.add("done");
+    else if(state.passed.has(L))el.classList.add("passed");
+  });
+}
+function updateStats(){
+  solvedEl.textContent=state.solved.size;
+  passedEl.textContent=state.passed.size;
+  leftEl.textContent=LETTERS.length-state.solved.size;
+  scoreEl.textContent=state.score;
+}
+function endGame(){
+  if(state.timer)cancelAnimationFrame(state.timer);
+  answer.disabled=true; submitBtn.disabled=true; passBtn.disabled=true;
+  clue.innerHTML=`<b>Játék vége!</b> Pontszám: ${state.score}, megoldva: ${state.solved.size}/25`;
+}
+function resetAll(){
+  if(state.timer)cancelAnimationFrame(state.timer);
+  Object.assign(state,{active:null,solved:new Set(),passed:new Set(),score:0,remainingMs:5*60*1000,started:false});
+  updateStats(); renderTime(state.remainingMs); feedback.textContent="";
+  clue.innerHTML="<span class='muted'>Kattints egy betűre a kezdéshez.</span>";
+  answer.value=""; answer.disabled=true; submitBtn.disabled=true; passBtn.disabled=true;
+  refreshLetters();
+}
+submitBtn.onclick=submit; passBtn.onclick=pass; resetBtn.onclick=resetAll;
+answer.addEventListener("keydown",e=>{if(e.key==="Enter")submit();});
+buildRing(); renderTime(state.remainingMs); updateStats();
+</script>
+</body>
+</html>
 # Vocab-wheel-school
 A-Z vocab. builder
